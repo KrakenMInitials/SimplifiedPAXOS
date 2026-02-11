@@ -12,7 +12,11 @@ import (
 
 func Trigger(client *rpc.Client, upper_bound int){
 	var response_value shared.AcceptResponse;
-	client.Call("Node.TriggerConsensus", &upper_bound, &response_value)
+	err := client.Call("Node.TriggerConsensus", &upper_bound, &response_value)
+	if (err != nil){
+		fmt.Println("Trigger Error: ", err)
+		return	
+	}
 }
 
 func main(){
