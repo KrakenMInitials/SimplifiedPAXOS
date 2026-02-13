@@ -47,8 +47,10 @@ func main(){
 				client, err = rpc.Dial("tcp", shared.AddressRegistry[id])
 				if (err != nil) {
 					fmt.Println("Failed to reach Node ", id , ": ", err, ". Retrying...")
-					time.Sleep(3 * time.Second) //3 sec retry timer
-				} else {break}
+					time.Sleep(1 * time.Second) //3 sec retry timer
+				} else {
+					fmt.Println("Connected to Node ", id)
+					break}
 			} 
 			
 			responsesCh<-client
@@ -64,10 +66,11 @@ func main(){
 		peer_connections = append(peer_connections, x)
 	}
 
-	ticker := time.NewTicker(10 * time.Second)	
+	ticker := time.NewTicker(5 * time.Second)	
 	for range ticker.C {
 		num := rand.Intn(100)
 		for _,client := range peer_connections {
+			fmt.Println("Asked for number below ", num)
 			go Trigger(client, num)
 		}
 	}

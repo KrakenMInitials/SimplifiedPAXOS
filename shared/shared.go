@@ -24,9 +24,8 @@ const (
 )
 
 // var Known_acceptors []int = []int{3,4,5}
-// var Known_proposers []int = []int{1,2}
+var Known_proposers []int = []int{1,2}
 var Known_acceptors []int = []int{3}
-var Known_proposers []int = []int{1}
 
 
 type PrepareRequest struct {
@@ -36,10 +35,10 @@ type PrepareRequest struct {
 
 type PrepareResponse struct {
 	Agreement bool 
-	// Yes if accept request highest prpslnum;
-	// Ignored if not highest proposal num recieved or against any promises;
-	// No if highest proposal num but highest value exists
-	HighestVal int //Highest known value by acceptor
+	// Yes if accept request highest prpslnum regardless of existing value in acceptor; proposed value or not handled proposer side
+	// No if not highest proposal num recieved or against any promises;
+	HighestPrpslNum int
+	ExistingVal int //Highest known value by acceptor
 }
 
 type AcceptRequest struct {
