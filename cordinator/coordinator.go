@@ -78,6 +78,7 @@ func main(){
 		consensus_round += 1
 	}
 
+	//
 
 	//spawn a bunch of simuatenous goroutines to trigger consensus to proposers
 }

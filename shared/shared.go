@@ -50,7 +50,11 @@ type AcceptRequest struct {
 
 type AcceptResponse struct {
 	ConsensusRoundID int
-	FinalValue int
+	Agreement bool 
+	// Yes if no new highest proposal num came in 
+	// No if new highest proposal num recieved in between
+	HighestPrpslNum int // if agreement = no
+	Value int
 }
 
 type ConsensusArgs struct { //RPC args to trigger consensus from coordinator to proposers

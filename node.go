@@ -73,17 +73,34 @@ func (n *Node) ProcessPrepareRequest(args *shared.PrepareRequest, reply *shared.
 	return nil
 	}
 
-	// func (n *Node) ProcessAcceptRequest(arg *shared.AcceptRequest, reply *shared.AcceptResponse) error {	
-	// 	if (n.Class != shared.ACCEPTOR_CLASS) {
-	// 		return errors.New("ProcessAcceptRequest() called on non-acceptor")
-	// 	}
+func (n *Node) ProcessAcceptRequest(arg *shared.AcceptRequest, reply *shared.AcceptResponse) error {	
+	if (n.Class != shared.ACCEPTOR_CLASS) {
+		return errors.New("ProcessAcceptRequest() called on non-acceptor")
+	}
 
-	// 	proposal_num = arg.PrpslNum
-	// 	proposal_val = arg.PrpsdValue
-		
-	// 	return 
-	// 	//acceptor behavior on accept request
-	// } 
+
+	//Q: Can accept request have proposal number lower than n.highest proposal number
+	//A: prolly provaeable so nahh
+	if n.highestPrpslNum <= arg.PrpslNum {
+		fmt.Println("The sky is falling")
+		return errors.New("The sky is falling")
+	}
+
+	if n.highestPrpslNum == arg.PrpslNum {
+		reply.ConsensusRoundID = n.ConsensusRound
+		reply.Agreement = true
+		reply.HighestPrpslNum = n.highestPrpslNum
+		reply.Value = arg.PrpsdValue
+	} else {
+		reply.ConsensusRoundID = n.ConsensusRound
+		reply.Agreement = false
+		reply.HighestPrpslNum = n.highestPrpslNum
+		reply.Value = *(n.knownVal)
+	}
+	
+	return nil
+	//acceptor behavior on accept request
+} 
 
 
 
@@ -115,6 +132,9 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 	for i:=1;;i+=1{
 		addr := shared.AddressRegistry[n.ID]
 		port, err := strconv.Atoi(addr[len(addr)-4:])
+		if err != nil {
+			fmt.Println("String conversion err: ", err)
+		}
 		n.proposedPrpslNum = port * i
 
 		if (n.proposedPrpslNum < n.highestPrpslNum){
@@ -129,7 +149,7 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 		responsesCh := make(chan shared.PrepareResponse, len(n.PeerClients))
 		failuresCh := make(chan struct{}, len(n.PeerClients))
 
-		//spawn goroutines to propose and fetch prepare responses from acceptors
+		//spawn goroutines to call and collect prepare responses from acceptors 
 		for peer_id,client := range n.PeerClients{
 			go func (c *rpc.Client){
 
@@ -139,7 +159,7 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 				select {
 				case <-call.Done:
 					if (call.Error != nil){
-						fmt.Println("Acceptor node failed to RPC ProcessPrepareRequest: ", err)
+						fmt.Println("Acceptor node failed to RPC ProcessPrepareRequest: ", call.Error.Error())
 						failuresCh<-struct{}{}
 						// return Errors.New("Acceptor node failed to RPC ProcessPrepareRequest")
 					}
@@ -155,46 +175,40 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 			} (client)
 		}
 
-		//current implementation to collect responses continues as soon as majority of acceptors is reached
-
-		//Q: Is it possible that a majority Value is not determinable from the responded acceptors?
-		//A: I dont' think so, just based on majority rule and odd number of acceptors. 
-		//Q2: But if we continue as soon as majority of acceptors is hit. 
-		//    Isn't it possible that the potential prepare responses not recieved yet could overturn the
-		//    majority value?
-		//A2: Unexplored 
-
 		success_count := 0
 		failure_count := 0
 		
 		//don't close channels; main node process may reach before responses sent down channels  
+		//handles prepare responses
 		for {
 			select {
 			case <-failuresCh:
 				failure_count += 1
 			case x := <-responsesCh:
 				success_count += 1
+
+				//process each prepare response
 				values_set[x.ExistingVal] = values_set[x.ExistingVal] + 1 //golang set alt. using maps copies by val; cannot handle pointers properly				
 				if x.HighestPrpslNum > n.highestPrpslNum {n.highestPrpslNum = x.HighestPrpslNum} //modify node state
 
 				fmt.Println("Round", n.ConsensusRound, ": Prepare Response recieved with value ", x.ExistingVal, "and highest proposal #", x.HighestPrpslNum)
 			}
 		
-			if (failure_count == len(n.PeerClients)) {break}
-			if (success_count >= len(n.PeerClients)/2) {
+			//exit logic if majority responded 
+			if (failure_count == len(shared.Known_acceptors)) {break}
+			if (success_count >= len(shared.Known_acceptors)/2) {
 				//begin phase 2	
 				break Phase1
 			}
-			if (failure_count + success_count == len(n.PeerClients)){break}
+			if (failure_count + success_count == len(shared.Known_acceptors)){break}
 		}
 		
 		time.Sleep(2 * time.Second) //intervals between proposal retries with new proposal numbers; acceptors do not know which proposal number was highest in acceptor
 	}
 
 	//need to find majority of responded acceptors' values
-	var majorityVal int = int(math.Inf(-1))
+	var majorityVal int
 	var majorityCount int
-
 	for val, count := range values_set {
 		if count > majorityCount {
 			majorityVal = val
@@ -203,9 +217,87 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 
 	fmt.Println("Majority value was ", majorityVal)
 	n.knownVal = &majorityVal //modify node state
+	
+	//current implementation to collect responses continues as soon as majority of acceptors is reached
 
+	//Q: Is it possible that a majority Value is not determinable from the responded acceptors?
+	//A: I dont' think so, just based on majority rule and odd number of acceptors. 
+	//Q2: But if we continue as soon as majority of acceptors is hit. 
+	//    Isn't it possible that the potential prepare responses not recieved yet could overturn the
+	//    majority value?
+	//A2: Unexplored 
+		
 	// Phase2:
 
+	accept_request := &shared.AcceptRequest{ConsensusRoundID: n.ConsensusRound, PrpslNum: n.proposedPrpslNum, PrpsdValue: *n.knownVal}
+	responsesCh := make(chan shared.AcceptResponse, len(responded_acceptor_ids))
+	failuresCh := make(chan struct{}, len(responded_acceptor_ids))
+
+	//call and collect accept responses from acceptors 
+	for peer_id := range responded_acceptor_ids {
+		client := n.PeerClients[peer_id]
+		go func (c *rpc.Client){
+			var accept_response shared.AcceptResponse
+			call := c.Go("Node.ProcessAcceptResponse", &accept_request, &accept_response, make(chan *rpc.Call, 1)) //is an async call, not a goroutine
+			
+			select {
+			case <-call.Done:
+				if (call.Error != nil){ //error with call
+					fmt.Println("Acceptor node failed to RPC ProcessPrepareRequest: ", call.Error.Error())
+					failuresCh<-struct{}{}
+					// return Errors.New("Acceptor node failed to RPC ProcessPrepareRequest")
+				}
+				responsesCh <- accept_response
+				responded_acceptors_MU.Lock()
+				responded_acceptor_ids[peer_id] = struct{}{} //add peer ID to responded acceptors
+				responded_acceptors_MU.Unlock()
+			case <-time.After(time.Second * 2): //timeout before RPC marked as failure by default 
+				//not reached since RPC calls are never ignored unless lost (code scope doesn't inlcude loss simulation)
+				failuresCh<-struct{}{}
+			}
+
+		} (client)	
+	}
+
+	success_count := 0
+	failure_count := 0
+
+	//handles accept responses
+	for {
+		select {
+		case <-failuresCh:
+			failure_count += 1
+		case x := <-responsesCh:
+			success_count += 1
+			//process each accept response
+			if x.Agreement == true {
+				// Complete and proposer job done
+				fmt.Println("Round", n.ConsensusRound, ": Proposer value accepted and finished task.")
+				return nil
+			}
+
+			if x.HighestPrpslNum > n.highestPrpslNum {n.highestPrpslNum = x.HighestPrpslNum} //modify node state
+
+			fmt.Println("Round", n.ConsensusRound, ": Prepare Response recieved with value ", x.ExistingVal, "and highest proposal #", x.HighestPrpslNum)
+		}
+	
+		//exit logic if majority responded
+		if (failure_count == len(shared.Known_acceptors)) {break}
+		if (success_count >= len(shared.Known_acceptors)/2) {
+			break
+		}
+		if (failure_count + success_count == len(shared.Known_acceptors)){break}
+	}
+
+	//need to find majority of responded acceptors' values
+		//!! do i need to check if majority of responded acceptors had the same value?
+	majorityVal = 0
+	majorityCount = 0
+	for val, count := range values_set {
+		if count > majorityCount {
+			majorityVal = val
+		}
+	}
 
 	return nil
 }
