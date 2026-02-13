@@ -1,4 +1,4 @@
-package coordinator
+package main
 
 import (
 	"SimplifiedPAXOS/shared"
@@ -8,6 +8,7 @@ import (
 	"time"
 	"os"
 	"math/rand"
+	"sync"
 )
 
 func Trigger(client *rpc.Client, upper_bound int){
@@ -30,22 +31,45 @@ func main(){
 	}
 	defer listener.Close()
 
-	client1, err := rpc.Dial("tcp", shared.AddressRegistry[1])
-	if (err != nil){
-		fmt.Println("Failed to connect to Node id 1")
-	}
-	defer client1.Close()
-	client2, err := rpc.Dial("tcp", shared.AddressRegistry[2])
-	if (err != nil){
-		fmt.Println("Failed to connect to Node id 2")
-	}
-	defer client2.Close()
+	var peers []int = shared.Known_proposers
 
-	ticker := time.NewTicker(10)	
+	//create connections to known acceptors concurrently
+	var wg sync.WaitGroup
+	responsesCh := make(chan *rpc.Client, len(peers))
+
+	for _,id := range peers {
+		wg.Add(1) 
+		go func(){
+			defer wg.Done()
+
+			var client *rpc.Client
+			for {
+				client, err = rpc.Dial("tcp", shared.AddressRegistry[id])
+				if (err != nil) {
+					fmt.Println("Failed to reach Node ", id , ": ", err, ". Retrying...")
+					time.Sleep(3 * time.Second) //3 sec retry timer
+				} else {break}
+			} 
+			
+			responsesCh<-client
+		}()
+	}
+
+	wg.Wait()
+	close(responsesCh)
+
+	var peer_connections []*rpc.Client
+
+	for x := range responsesCh {
+		peer_connections = append(peer_connections, x)
+	}
+
+	ticker := time.NewTicker(10 * time.Second)	
 	for range ticker.C {
 		num := rand.Intn(100)
-		go Trigger(client1, num)
-		go Trigger(client2, num)
+		for _,client := range peer_connections {
+			go Trigger(client, num)
+		}
 	}
 
 

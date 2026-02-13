@@ -18,10 +18,16 @@ var AddressRegistry = map[int]string {
 type Class int 
 const (
 	UNKNOWN_CLASS Class = iota
-	PROPOSER_CLASS
-	ACCEPTOR_CLASS
-	LEARNER_CLASS //unused
+	PROPOSER_CLASS //1
+	ACCEPTOR_CLASS //2
+	LEARNER_CLASS //3 but unused
 )
+
+// var Known_acceptors []int = []int{3,4,5}
+// var Known_proposers []int = []int{1,2}
+var Known_acceptors []int = []int{3}
+var Known_proposers []int = []int{1}
+
 
 type PrepareRequest struct {
 	PrpslNum int //Proposal Number
@@ -29,7 +35,10 @@ type PrepareRequest struct {
 } 
 
 type PrepareResponse struct {
-	Agreement bool //Yes if accept request highest prpslnum; Not highest gets ignored; No if highest prpslnum but highest value exists
+	Agreement bool 
+	// Yes if accept request highest prpslnum;
+	// Ignored if not highest proposal num recieved or against any promises;
+	// No if highest proposal num but highest value exists
 	HighestVal int //Highest known value by acceptor
 }
 
