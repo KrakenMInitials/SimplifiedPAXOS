@@ -1,5 +1,6 @@
 package shared
 
+import "net/rpc"
 
 //deterministic id-port mappings
 var AddressRegistry = map[int]string {
@@ -52,7 +53,12 @@ type AcceptResponse struct {
 	FinalValue int
 }
 
-type ConsensusArgs struct {
+type ConsensusArgs struct { //RPC args to trigger consensus from coordinator to proposers
 	ConsensusRoundID int
 	UpperBound int
+}
+
+type IdToRPCClientTuple struct { //tuple workaround as helper to modify PeerClient state; 
+	ID int
+	Client *rpc.Client
 }

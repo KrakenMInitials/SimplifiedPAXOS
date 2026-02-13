@@ -70,7 +70,7 @@ func main(){
 	consensus_round := 0
 	for range ticker.C {
 		num := rand.Intn(100)
-		fmt.Println("Asked for number below ", num)
+		fmt.Println("RoundAsked for number below ", num)
 		args := &shared.ConsensusArgs{ConsensusRoundID: consensus_round, UpperBound : num}
 		for _,client := range peer_connections {
 			go Trigger(client, args)

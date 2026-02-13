@@ -18,10 +18,12 @@ type Node struct { //stores Node state
 	ID int
 	Class shared.Class
 	NodeListener net.Listener
-	Acceptors []*rpc.Client
+	PeerClients map[int]*rpc.Client //stores id to rpc.client instances for known peers
 
+	proposedPrpslNum int
 	highestPrpslNum int
 	knownVal *int //has to be pointer to be nil-checkable
+	
 	ConsensusRound int
 }
 
@@ -40,12 +42,13 @@ func (n *Node) ProcessPrepareRequest(args *shared.PrepareRequest, reply *shared.
 	if (n.Class != shared.ACCEPTOR_CLASS) {
 		return errors.New("ProcessPrepareRequest() called on non-acceptor")
 	}
-	fmt.Println("Round ", args.ConsensusRoundID,"Acceptor recieved  #", args.PrpslNum, ": ", args.PrpsdValue)
+	fmt.Println("Round", args.ConsensusRoundID, ": Acceptor recieved  #", args.PrpslNum, ": ", args.PrpsdValue)
 	
 	//reset node state
 	if args.ConsensusRoundID > n.ConsensusRound {
 		n.ConsensusRound = args.ConsensusRoundID
-		n.highestPrpslNum = 0
+		n.proposedPrpslNum = 0
+		n.highestPrpslNum = 0 //proposers use this as highest known proposal number; acceptors use it as benchmark to accept/reject proposals
 		n.knownVal = nil 
 	}
 	
@@ -95,34 +98,39 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 	//reset node state
 	if args.ConsensusRoundID > n.ConsensusRound {
 		n.ConsensusRound = args.ConsensusRoundID
+		n.proposedPrpslNum = 0
 		n.highestPrpslNum = 0
 		n.knownVal = nil 
 	}
-
-
 
 	//parse args
 	consensus_round := args.ConsensusRoundID
 	upper_bound := args.UpperBound
 
 	values_set := make(map[int]int) //stores <response value>:<frequency>
+	responded_acceptor_ids := make(map[int]struct{}) //set of ids for acceptor that responded for use in phase 2
+	var responded_acceptors_MU sync.Mutex
 
 	Phase1:
 	for i:=1;;i+=1{
 		addr := shared.AddressRegistry[n.ID]
 		port, err := strconv.Atoi(addr[len(addr)-4:])
-		prop_num := port * i
+		n.proposedPrpslNum = port * i
+
+		if (n.proposedPrpslNum < n.highestPrpslNum){
+			continue
+		}
 
 		v := rand.Intn(upper_bound)
 
-		prepare_request := shared.PrepareRequest{ConsensusRoundID: consensus_round, PrpslNum: prop_num, PrpsdValue: v}
-		fmt.Println("Proposing #", prop_num, " ", v)
+		prepare_request := shared.PrepareRequest{ConsensusRoundID: consensus_round, PrpslNum: n.proposedPrpslNum, PrpsdValue: v}
+		fmt.Println("Proposing #", n.proposedPrpslNum, " ", v)
 		
-		responsesCh := make(chan shared.PrepareResponse, len(n.Acceptors))
-		failuresCh := make(chan struct{}, len(n.Acceptors))
+		responsesCh := make(chan shared.PrepareResponse, len(n.PeerClients))
+		failuresCh := make(chan struct{}, len(n.PeerClients))
 
 		//spawn goroutines to propose and fetch prepare responses from acceptors
-		for _,client := range n.Acceptors{
+		for peer_id,client := range n.PeerClients{
 			go func (c *rpc.Client){
 
 				var prepare_response shared.PrepareResponse
@@ -136,6 +144,10 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 						// return Errors.New("Acceptor node failed to RPC ProcessPrepareRequest")
 					}
 					responsesCh <- prepare_response
+					
+					responded_acceptors_MU.Lock()
+					responded_acceptor_ids[peer_id] = struct{}{} //add peer ID to responded acceptors
+					responded_acceptors_MU.Unlock()
 				case <-time.After(time.Second * 2): //timeout before RPC marked as failure by default 
 					//not reached since RPC calls are never ignored unless lost (code scope doesn't inlcude loss simulation)
 					failuresCh<-struct{}{}
@@ -162,17 +174,18 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 				failure_count += 1
 			case x := <-responsesCh:
 				success_count += 1
-				values_set[x.ExistingVal] = values_set[x.ExistingVal] + 1 //golang set alt. using maps copies by val; cannot handle pointers properly
-				fmt.Println("Prepare Response recieved with value ", x.ExistingVal, "and highest proposal #", x.HighestPrpslNum)
+				values_set[x.ExistingVal] = values_set[x.ExistingVal] + 1 //golang set alt. using maps copies by val; cannot handle pointers properly				
 				if x.HighestPrpslNum > n.highestPrpslNum {n.highestPrpslNum = x.HighestPrpslNum} //modify node state
+
+				fmt.Println("Round", n.ConsensusRound, ": Prepare Response recieved with value ", x.ExistingVal, "and highest proposal #", x.HighestPrpslNum)
 			}
 		
-			if (failure_count == len(n.Acceptors)) {break}
-			if (success_count >= len(n.Acceptors)/2) {
+			if (failure_count == len(n.PeerClients)) {break}
+			if (success_count >= len(n.PeerClients)/2) {
 				//begin phase 2	
 				break Phase1
 			}
-			if (failure_count + success_count == len(n.Acceptors)){break}
+			if (failure_count + success_count == len(n.PeerClients)){break}
 		}
 		
 		time.Sleep(2 * time.Second) //intervals between proposal retries with new proposal numbers; acceptors do not know which proposal number was highest in acceptor
@@ -191,8 +204,9 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 	fmt.Println("Majority value was ", majorityVal)
 	n.knownVal = &majorityVal //modify node state
 
-
 	// Phase2:
+
+
 	return nil
 }
 
@@ -228,12 +242,14 @@ func main(){
 	}
 	defer listener.Close()
 
-	//build and register node with args and defaults
+	//initialize Node; build and register node with args and defaults
 	self_node := &Node{
 		ID: node_id,
 		Class: shared.Class(class),
 		NodeListener: listener,
-		highestPrpslNum: 0,
+		PeerClients: make(map[int]*rpc.Client),
+		proposedPrpslNum: -1,
+		highestPrpslNum: -1,
 		knownVal: nil,
 	}
 	rpc.Register(self_node)
@@ -249,7 +265,7 @@ func main(){
 
 	//create RPC clients/connections concurrently and store in Node state
 	var wg sync.WaitGroup
-	responsesCh := make(chan *rpc.Client, len(peers))
+	clientsCh := make(chan shared.IdToRPCClientTuple, len(peers))
 
 	for _,id := range peers {
 		wg.Add(1) 
@@ -269,13 +285,14 @@ func main(){
 			} 
 			
 
-			responsesCh<-client
+			clientsCh <- shared.IdToRPCClientTuple{ID: id, Client: client}
 		}()
 	}
 	wg.Wait()
-	close(responsesCh)
-	for x := range responsesCh{
-		self_node.Acceptors = append(self_node.Acceptors, x) //modifies node state
+	close(clientsCh)
+
+	for x := range clientsCh{
+		self_node.PeerClients[x.ID] = x.Client //modifies node state
 	}
 	
 	// //goroutine to monitor baseline activity of node -mainly for debugging
