@@ -23,17 +23,17 @@ const (
 	LEARNER_CLASS //3 but unused
 )
 
-// var Known_acceptors []int = []int{3,4,5}
+var Known_acceptors []int = []int{3,4,5}
 var Known_proposers []int = []int{1,2}
-var Known_acceptors []int = []int{3}
-
 
 type PrepareRequest struct {
+	ConsensusRoundID int
 	PrpslNum int //Proposal Number
 	PrpsdValue int //Value
 } 
 
 type PrepareResponse struct {
+	ConsensusRoundID int
 	Agreement bool 
 	// Yes if accept request highest prpslnum regardless of existing value in acceptor; proposed value or not handled proposer side
 	// No if not highest proposal num recieved or against any promises;
@@ -42,10 +42,17 @@ type PrepareResponse struct {
 }
 
 type AcceptRequest struct {
+	ConsensusRoundID int
 	PrpslNum int 
 	PrpsdValue int
 }
 
 type AcceptResponse struct {
+	ConsensusRoundID int
 	FinalValue int
+}
+
+type ConsensusArgs struct {
+	ConsensusRoundID int
+	UpperBound int
 }

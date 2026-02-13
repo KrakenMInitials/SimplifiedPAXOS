@@ -11,9 +11,9 @@ import (
 	"sync"
 )
 
-func Trigger(client *rpc.Client, upper_bound int){
+func Trigger(client *rpc.Client, arg *shared.ConsensusArgs){
 	var response_value shared.AcceptResponse;
-	err := client.Call("Node.TriggerConsensus", &upper_bound, &response_value)
+	err := client.Call("Node.TriggerConsensus", arg, &response_value)
 	if (err != nil){
 		fmt.Println("Trigger Error: ", err)
 		return	
@@ -66,13 +66,16 @@ func main(){
 		peer_connections = append(peer_connections, x)
 	}
 
-	ticker := time.NewTicker(5 * time.Second)	
+	ticker := time.NewTicker(5 * time.Second) //time-based and doesn't wait for nodes to finish processing last consensus -out of scope
+	consensus_round := 0
 	for range ticker.C {
 		num := rand.Intn(100)
+		fmt.Println("Asked for number below ", num)
+		args := &shared.ConsensusArgs{ConsensusRoundID: consensus_round, UpperBound : num}
 		for _,client := range peer_connections {
-			fmt.Println("Asked for number below ", num)
-			go Trigger(client, num)
+			go Trigger(client, args)
 		}
+		consensus_round += 1
 	}
 
 

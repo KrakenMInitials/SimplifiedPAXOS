@@ -2,15 +2,16 @@ package main
 
 import (
 	"SimplifiedPAXOS/shared"
+	"errors"
 	"fmt"
+	"math"
+	"math/rand"
 	"net"
 	"net/rpc"
 	"os"
 	"strconv"
-	"errors"
-	"math/rand"
-	"time"
 	"sync"
+	"time"
 )
 
 type Node struct { //stores Node state
@@ -21,6 +22,7 @@ type Node struct { //stores Node state
 
 	highestPrpslNum int
 	knownVal *int //has to be pointer to be nil-checkable
+	ConsensusRound int
 }
 
 
@@ -34,27 +36,34 @@ type Node struct { //stores Node state
 
 // RPC Callable by proposers on acceptor
 // NEED TO SET TIMEOUT ON RPC CALLS TO ACCEPTORS
-func (n *Node) ProcessPrepareRequest(arg *shared.PrepareRequest, reply *shared.PrepareResponse) error { //phase 1
+func (n *Node) ProcessPrepareRequest(args *shared.PrepareRequest, reply *shared.PrepareResponse) error { //phase 1
 	if (n.Class != shared.ACCEPTOR_CLASS) {
 		return errors.New("ProcessPrepareRequest() called on non-acceptor")
 	}
-	fmt.Println("Acceptor recieved #", arg.PrpslNum, ": ", arg.PrpsdValue)
+	fmt.Println("Round ", args.ConsensusRoundID,"Acceptor recieved  #", args.PrpslNum, ": ", args.PrpsdValue)
 	
-	if (n.highestPrpslNum != 0) && (arg.PrpslNum <= n.highestPrpslNum){
+	//reset node state
+	if args.ConsensusRoundID > n.ConsensusRound {
+		n.ConsensusRound = args.ConsensusRoundID
+		n.highestPrpslNum = 0
+		n.knownVal = nil 
+	}
+	
+	if (n.highestPrpslNum != 0) && (args.PrpslNum <= n.highestPrpslNum){
 	//handles edge case dupe proposal numbers but not thoroughly
 		reply.Agreement = false
-		reply.HighestPrpslNum = arg.PrpslNum
-		reply.ExistingVal = arg.PrpsdValue
+		reply.HighestPrpslNum = n.highestPrpslNum
+		reply.ExistingVal = args.PrpsdValue
 		return nil
 	}
 	if (n.knownVal == nil) {
-		n.knownVal = &(arg.PrpsdValue)
+		n.knownVal = &(args.PrpsdValue)
 		reply.Agreement = true
-		reply.HighestPrpslNum = arg.PrpslNum
-		reply.ExistingVal = arg.PrpsdValue
-	} else if arg.PrpslNum > n.highestPrpslNum {
+		reply.HighestPrpslNum = args.PrpslNum
+		reply.ExistingVal = args.PrpsdValue
+	} else if args.PrpslNum > n.highestPrpslNum {
 		reply.Agreement = true
-		reply.HighestPrpslNum = arg.PrpslNum
+		reply.HighestPrpslNum = args.PrpslNum
 		reply.ExistingVal = *(n.knownVal)
 	}
 	
@@ -77,14 +86,27 @@ func (n *Node) ProcessPrepareRequest(arg *shared.PrepareRequest, reply *shared.P
 
 // RPC Callable by coordinator on proposers
 // args has upper bound set by coordinator
-func (n *Node) TriggerConsensus(args *int, reply *shared.AcceptResponse) error { //phase 1
+func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.AcceptResponse) error { //phase 1
 	fmt.Println("Consensus triggered by coordinator.")
 	if (n.Class != shared.PROPOSER_CLASS) {
 		return errors.New("TriggerConsensus called on non-proposer")
 	}
-	upper_bound := *args
 
-	values_set := make(map[int]int) //stores prepare response values on PrepareRequest success; uses funny golang set alternatives
+	//reset node state
+	if args.ConsensusRoundID > n.ConsensusRound {
+		n.ConsensusRound = args.ConsensusRoundID
+		n.highestPrpslNum = 0
+		n.knownVal = nil 
+	}
+
+
+
+	//parse args
+	consensus_round := args.ConsensusRoundID
+	upper_bound := args.UpperBound
+
+	values_set := make(map[int]int) //stores <response value>:<frequency>
+
 	Phase1:
 	for i:=1;;i+=1{
 		addr := shared.AddressRegistry[n.ID]
@@ -93,13 +115,13 @@ func (n *Node) TriggerConsensus(args *int, reply *shared.AcceptResponse) error {
 
 		v := rand.Intn(upper_bound)
 
-		prepare_request := shared.PrepareRequest{PrpslNum: prop_num, PrpsdValue: v}
-		fmt.Println(prop_num, " ", v)
+		prepare_request := shared.PrepareRequest{ConsensusRoundID: consensus_round, PrpslNum: prop_num, PrpsdValue: v}
+		fmt.Println("Proposing #", prop_num, " ", v)
 		
 		responsesCh := make(chan shared.PrepareResponse, len(n.Acceptors))
 		failuresCh := make(chan struct{}, len(n.Acceptors))
 
-		//spawn goroutines to contact acceptors
+		//spawn goroutines to propose and fetch prepare responses from acceptors
 		for _,client := range n.Acceptors{
 			go func (c *rpc.Client){
 
@@ -121,16 +143,28 @@ func (n *Node) TriggerConsensus(args *int, reply *shared.AcceptResponse) error {
 			} (client)
 		}
 
+		//current implementation to collect responses continues as soon as majority of acceptors is reached
+
+		//Q: Is it possible that a majority Value is not determinable from the responded acceptors?
+		//A: I dont' think so, just based on majority rule and odd number of acceptors. 
+		//Q2: But if we continue as soon as majority of acceptors is hit. 
+		//    Isn't it possible that the potential prepare responses not recieved yet could overturn the
+		//    majority value?
+		//A2: Unexplored 
+
 		success_count := 0
 		failure_count := 0
+		
+		//don't close channels; main node process may reach before responses sent down channels  
 		for {
 			select {
 			case <-failuresCh:
 				failure_count += 1
 			case x := <-responsesCh:
 				success_count += 1
-				values_set[x] = struct{}{} //golang set alt. using maps copies by val; cannot handle pointers properly
+				values_set[x.ExistingVal] = values_set[x.ExistingVal] + 1 //golang set alt. using maps copies by val; cannot handle pointers properly
 				fmt.Println("Prepare Response recieved with value ", x.ExistingVal, "and highest proposal #", x.HighestPrpslNum)
+				if x.HighestPrpslNum > n.highestPrpslNum {n.highestPrpslNum = x.HighestPrpslNum} //modify node state
 			}
 		
 			if (failure_count == len(n.Acceptors)) {break}
@@ -145,7 +179,17 @@ func (n *Node) TriggerConsensus(args *int, reply *shared.AcceptResponse) error {
 	}
 
 	//need to find majority of responded acceptors' values
+	var majorityVal int = int(math.Inf(-1))
+	var majorityCount int
 
+	for val, count := range values_set {
+		if count > majorityCount {
+			majorityVal = val
+		}
+	}
+
+	fmt.Println("Majority value was ", majorityVal)
+	n.knownVal = &majorityVal //modify node state
 
 
 	// Phase2:
@@ -234,14 +278,14 @@ func main(){
 		self_node.Acceptors = append(self_node.Acceptors, x) //modifies node state
 	}
 	
-	//goroutine to monitor baseline activity of node -mainly for debugging
-	go func (){
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			fmt.Println("Heartbeat: This node is still active...")
-		}
-	}()
+	// //goroutine to monitor baseline activity of node -mainly for debugging
+	// go func (){
+	// 	ticker := time.NewTicker(5 * time.Second)
+	// 	defer ticker.Stop()
+	// 	for range ticker.C {
+	// 		fmt.Println("Heartbeat: This node is still active...")
+	// 	}
+	// }()
 	rpc.Accept(listener) //blocks unless goroutined
 	//kickstarts the RPC callables
 }
