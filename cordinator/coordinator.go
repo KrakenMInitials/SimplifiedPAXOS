@@ -11,7 +11,15 @@ import (
 	"sync"
 )
 
-func Trigger(client *rpc.Client, arg *shared.ConsensusArgs){
+type Coordinator struct {
+	FinalValue int
+}
+
+func (c *Coordinator) ProcessFinalValue(arg int){
+
+}
+
+func trigger(client *rpc.Client, arg *shared.ConsensusArgs){
 	var response_value shared.AcceptResponse;
 	err := client.Call("Node.TriggerConsensus", arg, &response_value)
 	if (err != nil){
@@ -36,6 +44,9 @@ func main(){
 	//create connections to known acceptors concurrently
 	var wg sync.WaitGroup
 	responsesCh := make(chan *rpc.Client, len(peers))
+
+	the_coordinator := &Coordinator{FinalValue: 0}
+	rpc.Register(the_coordinator)
 
 	for _,id := range peers {
 		wg.Add(1) 
@@ -70,15 +81,22 @@ func main(){
 	consensus_round := 0
 	for range ticker.C {
 		num := rand.Intn(100)
-		fmt.Println("RoundAsked for number below ", num)
+		fmt.Println("Round", consensus_round, ": Asked for number below ", num)
 		args := &shared.ConsensusArgs{ConsensusRoundID: consensus_round, UpperBound : num}
+		//RPC Call for random value in upper_bound
 		for _,client := range peer_connections {
-			go Trigger(client, args)
+			go trigger(client, args)
 		}
 		consensus_round += 1
 	}
 
-	//
+	// TODO 2/13/2026
+	// Add RPC callable for coordinator that acceptors can call to send in consented values
+		// Create neccessary utilities and helpers 
+
+	// Should acceptor RPC call coordinator OR coordinator RPC call acceptor
+	// if coordinator RPC calls, it can control when new consensus rounds begin
+	 
 
 	//spawn a bunch of simuatenous goroutines to trigger consensus to proposers
 }
