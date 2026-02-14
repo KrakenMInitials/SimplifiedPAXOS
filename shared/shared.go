@@ -66,3 +66,21 @@ type IdToRPCClientTuple struct { //tuple workaround as helper to modify PeerClie
 	ID int
 	Client *rpc.Client
 }
+
+type ConsensusRoundToValueTuple struct {
+	RoundID int
+	Value int
+}
+
+// majority had to be found too commonly; made shared helper function
+// takes in value : frequency map
+func FindMajority(freq_dic map[int]int) int {
+	var majorityVal int
+	var majorityCount int
+	for val, count := range freq_dic {
+		if count > majorityCount {
+			majorityVal = val
+		}
+	}
+	return majorityVal
+}

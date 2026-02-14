@@ -4,7 +4,6 @@ import (
 	"SimplifiedPAXOS/shared"
 	"errors"
 	"fmt"
-	"math"
 	"math/rand"
 	"net"
 	"net/rpc"
@@ -78,19 +77,30 @@ func (n *Node) ProcessAcceptRequest(arg *shared.AcceptRequest, reply *shared.Acc
 		return errors.New("ProcessAcceptRequest() called on non-acceptor")
 	}
 
-
 	//Q: Can accept request have proposal number lower than n.highest proposal number
 	//A: prolly provaeable so nahh
-	if n.highestPrpslNum <= arg.PrpslNum {
+	if n.highestPrpslNum < arg.PrpslNum {
 		fmt.Println("The sky is falling")
 		return errors.New("The sky is falling")
 	}
 
-	if n.highestPrpslNum == arg.PrpslNum {
+	if n.highestPrpslNum == arg.PrpslNum { //value accepted and sent to distinguished learner
 		reply.ConsensusRoundID = n.ConsensusRound
 		reply.Agreement = true
 		reply.HighestPrpslNum = n.highestPrpslNum
 		reply.Value = arg.PrpsdValue
+
+		go func (){ //goroutine because coordinator uses unbuffered channel and will blocking wait
+			//problem if goroutine fails 
+			client := n.PeerClients[0]
+			arg := &shared.ConsensusRoundToValueTuple{RoundID: n.ConsensusRound, Value: arg.PrpsdValue,}
+			if err := client.Call("Coordinator.ProcessFinalValue", arg, nil) ; err != nil { 
+				fmt.Println("Round", n.ConsensusRound, ": failed to send value to coordinator.")
+			}
+		}()
+		
+		return nil
+
 	} else {
 		reply.ConsensusRoundID = n.ConsensusRound
 		reply.Agreement = false
@@ -131,6 +141,7 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 	Phase1:
 	for i:=1;;i+=1{
 		addr := shared.AddressRegistry[n.ID]
+
 		port, err := strconv.Atoi(addr[len(addr)-4:])
 		if err != nil {
 			fmt.Println("String conversion err: ", err)
@@ -196,7 +207,7 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 		
 			//exit logic if majority responded 
 			if (failure_count == len(shared.Known_acceptors)) {break}
-			if (success_count >= len(shared.Known_acceptors)/2) {
+			if (success_count > len(shared.Known_acceptors)/2) {
 				//begin phase 2	
 				break Phase1
 			}
@@ -206,15 +217,7 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 		time.Sleep(2 * time.Second) //intervals between proposal retries with new proposal numbers; acceptors do not know which proposal number was highest in acceptor
 	}
 
-	//need to find majority of responded acceptors' values
-	var majorityVal int
-	var majorityCount int
-	for val, count := range values_set {
-		if count > majorityCount {
-			majorityVal = val
-		}
-	}
-
+	majorityVal := shared.FindMajority(values_set)
 	fmt.Println("Majority value was ", majorityVal)
 	n.knownVal = &majorityVal //modify node state
 	
@@ -238,7 +241,7 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 		client := n.PeerClients[peer_id]
 		go func (c *rpc.Client){
 			var accept_response shared.AcceptResponse
-			call := c.Go("Node.ProcessAcceptResponse", &accept_request, &accept_response, make(chan *rpc.Call, 1)) //is an async call, not a goroutine
+			call := c.Go("Node.ProcessAcceptRequest", &accept_request, &accept_response, make(chan *rpc.Call, 1)) //is an async call, not a goroutine
 			
 			select {
 			case <-call.Done:
@@ -278,27 +281,18 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 
 			if x.HighestPrpslNum > n.highestPrpslNum {n.highestPrpslNum = x.HighestPrpslNum} //modify node state
 
-			fmt.Println("Round", n.ConsensusRound, ": Prepare Response recieved with value ", x.ExistingVal, "and highest proposal #", x.HighestPrpslNum)
+			fmt.Println("Round", n.ConsensusRound, ": Prepare Response recieved with value ", x.Value, "and highest proposal #", x.HighestPrpslNum)
 		}
 	
 		//exit logic if majority responded
 		if (failure_count == len(shared.Known_acceptors)) {break}
-		if (success_count >= len(shared.Known_acceptors)/2) {
+		if (success_count > len(shared.Known_acceptors)/2) {
 			break
 		}
 		if (failure_count + success_count == len(shared.Known_acceptors)){break}
 	}
 
-	//need to find majority of responded acceptors' values
-		//!! do i need to check if majority of responded acceptors had the same value?
-	majorityVal = 0
-	majorityCount = 0
-	for val, count := range values_set {
-		if count > majorityCount {
-			majorityVal = val
-		}
-	}
-
+	fmt.Println("Proposer reached funny segment. Potential error")
 	return nil
 }
 
@@ -352,7 +346,7 @@ func main(){
 	case shared.PROPOSER_CLASS:
 		peers = shared.Known_acceptors
 	case shared.ACCEPTOR_CLASS:
-		peers = shared.Known_proposers
+		peers = append(shared.Known_proposers, 0)
 	}
 
 	//create RPC clients/connections concurrently and store in Node state

@@ -12,11 +12,12 @@ import (
 )
 
 type Coordinator struct {
-	FinalValue int
+	ValuesQueue chan shared.ConsensusRoundToValueTuple //unbuffered to make blocking wait
 }
 
-func (c *Coordinator) ProcessFinalValue(arg int){
-
+func (c *Coordinator) ProcessFinalValue(arg *shared.ConsensusRoundToValueTuple) error {
+	c.ValuesQueue<- *arg 
+	return nil
 }
 
 func trigger(client *rpc.Client, arg *shared.ConsensusArgs){
@@ -45,7 +46,9 @@ func main(){
 	var wg sync.WaitGroup
 	responsesCh := make(chan *rpc.Client, len(peers))
 
-	the_coordinator := &Coordinator{FinalValue: 0}
+	the_coordinator := &Coordinator{
+		ValuesQueue: make(chan shared.ConsensusRoundToValueTuple),
+	}
 	rpc.Register(the_coordinator)
 
 	for _,id := range peers {
@@ -78,25 +81,45 @@ func main(){
 	}
 
 	ticker := time.NewTicker(5 * time.Second) //time-based and doesn't wait for nodes to finish processing last consensus -out of scope
-	consensus_round := 0
+	consensus_round := 0 //could be modified to be a state property
 	for range ticker.C {
 		num := rand.Intn(100)
 		fmt.Println("Round", consensus_round, ": Asked for number below ", num)
 		args := &shared.ConsensusArgs{ConsensusRoundID: consensus_round, UpperBound : num}
-		//RPC Call for random value in upper_bound
+		// RPC Call for random value in upper_bound
 		for _,client := range peer_connections {
-			go trigger(client, args)
+			go trigger(client, args) //spawn goroutines to trigger consensus to proposers
 		}
+
+		// 
+
+		values_set := make(map[int]int) //frequency dictionary of values
+		success_count := 0
+		for {
+			value := <- the_coordinator.ValuesQueue
+			if value.RoundID < consensus_round {
+				continue
+			}
+
+			values_set[value.Value] = values_set[value.Value] + 1
+			success_count += 1
+			if success_count > len(shared.Known_acceptors)/2 { //distinguished learner might not be supposed to continue on majority hit
+				break
+			}
+		}
+		
+		fmt.Println("Round", consensus_round, ": Consensus reached on :", shared.FindMajority(values_set))
+
+		time.Sleep(1 * time.Second)
 		consensus_round += 1
 	}
 
+
 	// TODO 2/13/2026
 	// Add RPC callable for coordinator that acceptors can call to send in consented values
-		// Create neccessary utilities and helpers 
 
 	// Should acceptor RPC call coordinator OR coordinator RPC call acceptor
 	// if coordinator RPC calls, it can control when new consensus rounds begin
 	 
 
-	//spawn a bunch of simuatenous goroutines to trigger consensus to proposers
 }
