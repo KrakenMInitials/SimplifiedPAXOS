@@ -15,8 +15,9 @@ type Coordinator struct {
 	ValuesQueue chan shared.ConsensusRoundToValueTuple //unbuffered to make blocking wait
 }
 
-func (c *Coordinator) ProcessFinalValue(arg *shared.ConsensusRoundToValueTuple) error {
+func (c *Coordinator) ProcessFinalValue(arg *shared.ConsensusRoundToValueTuple, reply *int) error {
 	fmt.Println("An acceptor sent", arg.Value, "for", arg.RoundID)
+	*reply = 1
 	c.ValuesQueue<- *arg 
 	return nil
 }

@@ -43,9 +43,6 @@ func (n *Node) ProcessPrepareRequest(args *shared.PrepareRequest, reply *shared.
 	if (n.Class != shared.ACCEPTOR_CLASS) {
 		return errors.New("ProcessPrepareRequest() called on non-acceptor")
 	}
-	if (n.complete){
-		return errors.New("Acceptor contacted is complete for round. ")
-	}
 	fmt.Println("Round", args.ConsensusRoundID, ": Acceptor recieved PrepareRequest #", args.PrpslNum, ": ", args.PrpsdValue)
 	
 
@@ -58,6 +55,10 @@ func (n *Node) ProcessPrepareRequest(args *shared.PrepareRequest, reply *shared.
 		n.knownVal = nil 
 		n.complete = false
 	}
+	if (n.complete){
+		return errors.New("Acceptor contacted is complete for round. ")
+	}
+
 	
 	if (n.highestPrpslNum != 0) && (args.PrpslNum <= n.highestPrpslNum){ //true reject
 	//handles edge case dupe proposal numbers but not thoroughly
@@ -122,8 +123,11 @@ func (n *Node) ProcessAcceptRequest(args *shared.AcceptRequest, reply *shared.Ac
 			//problem if goroutine fails 
 			client := n.PeerClients[0]
 			arg := &shared.ConsensusRoundToValueTuple{RoundID: n.ConsensusRound, Value: args.PrpsdValue,}
-			if err := client.Call("Coordinator.ProcessFinalValue", arg, nil) ; err != nil { 
+			fmt.Println("reach flag")
+			var reply int 
+			if err := client.Call("Coordinator.ProcessFinalValue", arg, &reply) ; err != nil || client == nil { 
 				fmt.Println("Round", n.ConsensusRound, ": failed to send value to coordinator.")
+				fmt.Println("   Error: ", err)
 			}
 			fmt.Println("Round", args.ConsensusRoundID, ": Acceptor sent final value and completed.")
 		}()
@@ -197,6 +201,7 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 
 		//spawn goroutines to call and collect prepare responses from acceptors 
 		for peer_id,client := range n.PeerClients{
+			fmt.Println(peer_id)
 			go func (c *rpc.Client){
 
 				var prepare_response shared.PrepareResponse
