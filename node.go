@@ -45,13 +45,14 @@ func (n *Node) ProcessPrepareRequest(args *shared.PrepareRequest, reply *shared.
 	
 	//reset node state
 	if args.ConsensusRoundID > n.ConsensusRound {
+		fmt.Println("New consensus round detected.")
 		n.ConsensusRound = args.ConsensusRoundID
 		n.proposedPrpslNum = 0
 		n.highestPrpslNum = 0 //proposers use this as highest known proposal number; acceptors use it as benchmark to accept/reject proposals
 		n.knownVal = nil 
 	}
 	
-	if (n.highestPrpslNum != 0) && (args.PrpslNum <= n.highestPrpslNum){
+	if (n.highestPrpslNum != 0) && (args.PrpslNum <= n.highestPrpslNum){ //true reject
 	//handles edge case dupe proposal numbers but not thoroughly
 		reply.Agreement = false
 		reply.HighestPrpslNum = n.highestPrpslNum
@@ -59,18 +60,24 @@ func (n *Node) ProcessPrepareRequest(args *shared.PrepareRequest, reply *shared.
 		return nil
 	}
 	if (n.knownVal == nil) {
+		//modify states
 		n.knownVal = &(args.PrpsdValue)
+		n.highestPrpslNum = args.PrpslNum
+
 		reply.Agreement = true
 		reply.HighestPrpslNum = args.PrpslNum
 		reply.ExistingVal = args.PrpsdValue
 	} else if args.PrpslNum > n.highestPrpslNum {
+		//modify states
+		n.highestPrpslNum = args.PrpslNum
+
 		reply.Agreement = true
 		reply.HighestPrpslNum = args.PrpslNum
 		reply.ExistingVal = *(n.knownVal)
 	}
 	
 	return nil
-	}
+}
 
 func (n *Node) ProcessAcceptRequest(arg *shared.AcceptRequest, reply *shared.AcceptResponse) error {	
 	if (n.Class != shared.ACCEPTOR_CLASS) {
@@ -80,7 +87,7 @@ func (n *Node) ProcessAcceptRequest(arg *shared.AcceptRequest, reply *shared.Acc
 	//Q: Can accept request have proposal number lower than n.highest proposal number
 	//A: prolly provaeable so nahh
 	if n.highestPrpslNum < arg.PrpslNum {
-		fmt.Println("The sky is falling")
+		fmt.Println("The sky is falling : known highest", n.highestPrpslNum, "incoming #:", arg.PrpslNum)
 		return errors.New("The sky is falling")
 	}
 
@@ -200,9 +207,11 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 
 				//process each prepare response
 				values_set[x.ExistingVal] = values_set[x.ExistingVal] + 1 //golang set alt. using maps copies by val; cannot handle pointers properly				
-				if x.HighestPrpslNum > n.highestPrpslNum {n.highestPrpslNum = x.HighestPrpslNum} //modify node state
+				// if x.HighestPrpslNum > n.highestPrpslNum {n.highestPrpslNum = x.HighestPrpslNum} //modify node state
+				n.highestPrpslNum = max(x.HighestPrpslNum, n.highestPrpslNum) //modify node state but cleaner
 
 				fmt.Println("Round", n.ConsensusRound, ": Prepare Response recieved with value ", x.ExistingVal, "and highest proposal #", x.HighestPrpslNum)
+				fmt.Println("State .highestPrpslNum: ", n.highestPrpslNum)
 			}
 		
 			//exit logic if majority responded 
@@ -218,7 +227,7 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 	}
 
 	majorityVal := shared.FindMajority(values_set)
-	fmt.Println("Majority value was ", majorityVal)
+	fmt.Println("Intermediary majority value was ", majorityVal)
 	n.knownVal = &majorityVal //modify node state
 	
 	//current implementation to collect responses continues as soon as majority of acceptors is reached
@@ -233,6 +242,7 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 	// Phase2:
 
 	accept_request := &shared.AcceptRequest{ConsensusRoundID: n.ConsensusRound, PrpslNum: n.proposedPrpslNum, PrpsdValue: *n.knownVal}
+	fmt.Println(accept_request)
 	responsesCh := make(chan shared.AcceptResponse, len(responded_acceptor_ids))
 	failuresCh := make(chan struct{}, len(responded_acceptor_ids))
 
@@ -279,7 +289,8 @@ func (n *Node) TriggerConsensus(args *shared.ConsensusArgs, reply *shared.Accept
 				return nil
 			}
 
-			if x.HighestPrpslNum > n.highestPrpslNum {n.highestPrpslNum = x.HighestPrpslNum} //modify node state
+			// if x.HighestPrpslNum > n.highestPrpslNum {n.highestPrpslNum = x.HighestPrpslNum} //modify node state
+			n.highestPrpslNum = max(x.HighestPrpslNum, n.highestPrpslNum) //modify node state but cleaner
 
 			fmt.Println("Round", n.ConsensusRound, ": Prepare Response recieved with value ", x.Value, "and highest proposal #", x.HighestPrpslNum)
 		}
