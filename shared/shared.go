@@ -74,8 +74,8 @@ type ConsensusRoundToValueTuple struct {
 
 // majority had to be found too commonly; made shared helper function
 // takes in value : frequency map
-func FindMajority(freq_dic map[int]int) int {
-	var majorityVal int
+func FindMajority[T comparable] (freq_dic map[T]int) T {
+	var majorityVal T
 	var majorityCount int
 	for val, count := range freq_dic {
 		if count > majorityCount {
