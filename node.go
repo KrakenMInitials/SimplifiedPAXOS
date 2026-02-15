@@ -43,8 +43,12 @@ func (n *Node) ProcessPrepareRequest(args *shared.PrepareRequest, reply *shared.
 	if (n.Class != shared.ACCEPTOR_CLASS) {
 		return errors.New("ProcessPrepareRequest() called on non-acceptor")
 	}
+	if (n.complete){
+		return errors.New("Acceptor contacted is complete for round. ")
+	}
 	fmt.Println("Round", args.ConsensusRoundID, ": Acceptor recieved PrepareRequest #", args.PrpslNum, ": ", args.PrpsdValue)
 	
+
 	//reset node state
 	if args.ConsensusRoundID > n.ConsensusRound {
 		fmt.Println("New consensus round detected.")
@@ -57,6 +61,8 @@ func (n *Node) ProcessPrepareRequest(args *shared.PrepareRequest, reply *shared.
 	
 	if (n.highestPrpslNum != 0) && (args.PrpslNum <= n.highestPrpslNum){ //true reject
 	//handles edge case dupe proposal numbers but not thoroughly
+		fmt.Println("1 Acceptor rejected and states are ", n.highestPrpslNum, *n.knownVal)
+
 		reply.Agreement = false
 		reply.HighestPrpslNum = n.highestPrpslNum
 		reply.ExistingVal = args.PrpsdValue
@@ -67,12 +73,16 @@ func (n *Node) ProcessPrepareRequest(args *shared.PrepareRequest, reply *shared.
 		n.knownVal = &(args.PrpsdValue)
 		n.highestPrpslNum = args.PrpslNum
 
+		fmt.Println("1 Acceptor accepted and states are ", n.highestPrpslNum, *n.knownVal)
+
 		reply.Agreement = true
 		reply.HighestPrpslNum = args.PrpslNum
 		reply.ExistingVal = args.PrpsdValue
 	} else if args.PrpslNum > n.highestPrpslNum {
 		//modify states
 		n.highestPrpslNum = args.PrpslNum
+
+		fmt.Println("1 Acceptor accepted and states are ", n.highestPrpslNum, *n.knownVal)
 
 		reply.Agreement = true
 		reply.HighestPrpslNum = args.PrpslNum
@@ -86,6 +96,9 @@ func (n *Node) ProcessAcceptRequest(args *shared.AcceptRequest, reply *shared.Ac
 	if (n.Class != shared.ACCEPTOR_CLASS) {
 		return errors.New("ProcessAcceptRequest() called on non-acceptor")
 	}
+	if (n.complete){
+		return errors.New("Acceptor contacted is complete for round")
+	}
 
 	fmt.Println("Round", args.ConsensusRoundID, ": Acceptor recieved AcceptRequest #", args.PrpslNum, ": ", args.PrpsdValue)
 
@@ -98,12 +111,12 @@ func (n *Node) ProcessAcceptRequest(args *shared.AcceptRequest, reply *shared.Ac
 
 	if n.highestPrpslNum == args.PrpslNum { //value accepted and sent to distinguished learner
 		n.complete = true
+		fmt.Println("2 Acceptor accepted with ", n.ConsensusRound, n.highestPrpslNum, *n.knownVal)
 
 		reply.ConsensusRoundID = n.ConsensusRound
 		reply.Agreement = true
 		reply.HighestPrpslNum = n.highestPrpslNum
 		reply.Value = args.PrpsdValue
-
 
 		go func (){ //goroutine because coordinator uses unbuffered channel and will blocking wait
 			//problem if goroutine fails 
@@ -117,6 +130,8 @@ func (n *Node) ProcessAcceptRequest(args *shared.AcceptRequest, reply *shared.Ac
 		
 		return nil
 	} else {
+		fmt.Println("2 Acceptor rejected with ", n.ConsensusRound, n.highestPrpslNum, *n.knownVal)
+
 		reply.ConsensusRoundID = n.ConsensusRound
 		reply.Agreement = false
 		reply.HighestPrpslNum = n.highestPrpslNum

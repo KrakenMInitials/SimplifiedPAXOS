@@ -16,6 +16,7 @@ type Coordinator struct {
 }
 
 func (c *Coordinator) ProcessFinalValue(arg *shared.ConsensusRoundToValueTuple) error {
+	fmt.Println("An acceptor sent", arg.Value, "for", arg.RoundID)
 	c.ValuesQueue<- *arg 
 	return nil
 }
@@ -50,6 +51,7 @@ func main(){
 		ValuesQueue: make(chan shared.ConsensusRoundToValueTuple),
 	}
 	rpc.Register(the_coordinator)
+	go rpc.Accept(listener) //create server
 
 	for _,id := range peers {
 		wg.Add(1) 
