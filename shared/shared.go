@@ -7,14 +7,17 @@ var AddressRegistry = map[int]string {
 	0: "localhost:8000", //coordinator and distinguished learner 
 	1: "localhost:8001", //proposer
 	2: "localhost:8002", //proposer
-	3: "localhost:8003", //acc
-	4: "localhost:8004", //acc
-	5: "localhost:8005", //acc 
+	3: "localhost:8003", //proposer
+	4: "localhost:8004", //proposer
+	5: "localhost:8005", //acceptor
+	6: "localhost:8006", //acceptor
+	7: "localhost:8007", //acceptor
+	8: "localhost:8008", //acceptor
+	9: "localhost:8009", //acceptor
+	10: "localhost:8010", //acceptor
+	11: "localhost:8011", //acceptor
 }
 
-//Class was only used for debugging and conceptual work
-//All nodes know behaviour of proposer, acceptor, learner
-//I change my mind, its complex to assume a single node changes behaviour depending on message type recieved
 //Nodes have fixed classes assigned from CLI args
 type Class int 
 const (
@@ -24,8 +27,8 @@ const (
 	LEARNER_CLASS //3 but unused
 )
 
-var Known_acceptors []int = []int{3,4,5}
-var Known_proposers []int = []int{1,2}
+var Known_acceptors []int = []int{5,6,7,8,9,10, 11} // 6 acceptors (even, so add one more for odd)
+var Known_proposers []int = []int{1,2,3,4}
 
 type PrepareRequest struct {
 	ConsensusRoundID int

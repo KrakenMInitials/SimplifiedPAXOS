@@ -16,7 +16,7 @@ type Coordinator struct {
 }
 
 func (c *Coordinator) ProcessFinalValue(arg *shared.ConsensusRoundToValueTuple, reply *int) error {
-	fmt.Println("An acceptor sent", arg.Value, "for", arg.RoundID)
+	fmt.Println("An acceptor sent", arg.Value, "for round", arg.RoundID)
 	*reply = 1
 	c.ValuesQueue<- *arg 
 	return nil
@@ -64,7 +64,7 @@ func main(){
 				client, err = rpc.Dial("tcp", shared.AddressRegistry[id])
 				if (err != nil) {
 					fmt.Println("Failed to reach Node ", id , ": ", err, ". Retrying...")
-					time.Sleep(1 * time.Second) //3 sec retry timer
+					time.Sleep(3 * time.Second) //3 sec retry timer
 				} else {
 					fmt.Println("Connected to Node ", id)
 					break}
@@ -113,7 +113,7 @@ func main(){
 		
 		fmt.Println("Round", consensus_round, ": Consensus reached on :", shared.FindMajority(values_set))
 
-		time.Sleep(1 * time.Second)
+		time.Sleep(5 * time.Second)
 		consensus_round += 1
 	}
 
